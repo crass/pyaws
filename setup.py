@@ -7,7 +7,7 @@ if version < '2.2.3':
 
 
 setup(name='pyaws',
-	version='0.3.0',
+	version='0.3.1',
 	package_dir={'pyaws': ''},
 	packages=['pyaws'],
 	author='Kun Xi',
@@ -17,7 +17,7 @@ setup(name='pyaws',
 	url='http://pyaws.sourceforge.net',
 	license='Python Software Foundation License',
 	platforms='OS Independent',
-	download_url='http://prdownloads.sourceforge.net/pyaws/pyaws-0.1.0.tar.gz?download',
+	download_url='http://wayback.archive.org/web/20101031210447/http://trac2.assembla.com/pyaws/attachment/wiki/WikiStart/pyaws-0.3.0.tar.gz',
 	classifiers=[
 		'Development Status :: 2 - Pre-Alpha',
 		'Environment :: Web Environment',

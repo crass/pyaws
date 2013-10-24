@@ -1,5 +1,12 @@
 # Author: Kun Xi <kunxi@kunxi.org>
 # License: Python Software Foundation License
+# 
+# Note: This version, 0.3.1, supports the signed requests required
+# by Amazon.
+# The changes over 0.3.0 are based on a patch for 0.2.0 found here:
+# http://blog.umlungu.co.uk/blog/2009/jul/12/pyaws-adding-request-authentication
+# To make it work, just download pyaws from http://trac2.assembla.com/pyaws
+# and replace the ecs.py file with this one.
 
 """
 A Python wrapper to access Amazon Web Service(AWS) E-Commerce Serive APIs,
@@ -16,6 +23,7 @@ Exception classes:
 
 - `AWSException`
 - `NoLicenseKey`
+- `NoSecretKey`
 - `BadLocale`
 - `BadOption`
 - `ExactParameterRequirement`
@@ -50,6 +58,8 @@ Functions:
 - `getLocale`
 - `setLicenseKey`
 - `getLicenseKey`
+- `setSecretKey`
+- `getSecretKey`
 - `getVersion`
 - `setOptions` 
 - `getOptions`
@@ -109,7 +119,10 @@ How To Use This Module
 2. Import it: ``import pyaws.ecs``
 
 3. Setup the license key: ``ecs.setLicenseKey('YOUR-KEY-FROM-AWS')``
-   or you could use the environment variable AMAZON_Meta.license_key
+   or you could use the environment variable AWS_LICENSE_KEY
+
+4. Setup your secret key: ``ecs.setSecretKey('YOUR-SECRET-KEY-FROM-AWS')``
+   or you could use the environment variable AWS_SECRET_KEY
 
    Optional: 
    a) setup other options, like AssociateTag, MerchantID, Validate
@@ -120,19 +133,22 @@ How To Use This Module
 """
 
 __author__ = "Kun Xi <kunxi@kunxi.org>"
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __license__ = "Python Software Foundation"
 __docformat__ = 'restructuredtext'
 
 
 import os, urllib, string
+import hmac, hashlib, base64
+from time import strftime, gmtime
 from xml.dom import minidom
 
 
 class Meta:
     license_key = None
+    secret_key = None
     locale = "us" 
-    version = "2007-04-04"
+    version = "2009-07-01"
     options = {}
     
     locales = {
@@ -368,6 +384,7 @@ def Pagination(XMLSearch, arguments, keywords, plugins):
 # Exception classes
 class AWSException(Exception) : pass
 class NoLicenseKey(AWSException) : pass
+class NoSecretKey(AWSException) : pass
 class BadLocale(AWSException) : pass
 class BadOption(AWSException): pass
 # Runtime exception
@@ -396,22 +413,41 @@ class ParameterOutOfRange(AWSException): pass
 class ParameterRepeatedInRequest(AWSException): pass
 class RestrictedParameterValueCombination(AWSException): pass
 class XSLTTransformationError(AWSException): pass
+class ECommerceServiceNoExactMatches(AWSException): pass
 
 
 def buildRequest(argv):
     """Build the REST request URL from argv."""
-    url = "http://" + Meta.locales[getLocale()] + "/onca/xml?Service=AWSECommerceService&" + 'Version=%s&' % Meta.version
+    url = "https://" + Meta.locales[getLocale()] + "/onca/xml?"
+
+    #add Service to url param to argv so it can be sorted:
+    argv['Service'] = 'AWSECommerceService'
+    argv['Version'] = Meta.version
+    # add Timestamp url param to argv, this is required when using a signature
+    argv['Timestamp'] = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime())   
+
     if not argv['AWSAccessKeyId']:
         argv['AWSAccessKeyId'] = getLicenseKey()
     argv.update(getOptions())
-    return url + '&'.join(['%s=%s' % (k,urllib.quote(str(v))) for (k,v) in argv.items() if v]) 
+
+    #args must be sorted so both you and amazon generate the same hashed signature
+    sortedArgv = argv.items()
+    sortedArgv.sort()
+    
+    paramsToEncode = '&'.join(['%s=%s' % (k,urllib.quote(str(v),safe='-_.~')) for (k,v) in sortedArgv if v is not None])
+    stringToSign = "GET" + "\n" + Meta.locales[getLocale()] + "\n" + "/onca/xml" + "\n" + paramsToEncode.encode('utf-8')
+    signature = base64.b64encode(hmac.new(getSecretKey(), stringToSign, hashlib.sha256).digest())
+
+    argv['Signature'] = signature
+
+    return url + '&'.join(['%s=%s' % (k,urllib.quote(str(v))) for (k,v) in argv.items() if v is not None])
 
 
 def buildException(els):
     """Build the exception from the returned DOM node
     Note: only the first exception is raised."""
     error = els[0]
-    class_name = error.childNodes[0].firstChild.data[4:]
+    class_name = error.childNodes[0].firstChild.data[4:].replace(".", "")
     msg = error.childNodes[1].firstChild.data 
 
     e = globals()[ class_name ](msg)
@@ -869,8 +905,8 @@ def getLocale():
 def setLicenseKey(license_key=None):
     """Set AWS license key.
     If license_key is not specified, the license key is set using the
-    environment variable: AMAZON_Meta.license_key; if no license key is 
-    set, NoLicenseKey exception is raised."""
+    environment variable: AWS_LICENSE_KEY; if no license key is set,
+    NoLicenseKey exception is raised."""
     if license_key:
         Meta.license_key = license_key
     else :
@@ -884,6 +920,26 @@ def getLicenseKey():
         return Meta.license_key
     else :
         raise NoLicenseKey, ("Please get the license key from  http://www.amazon.com/webservices")
+
+
+def setSecretKey(secret_key=None):
+    """Set AWS secret key.
+    If secret_key is not specified, the secret key is set using the
+    environment variable: AWS_SECRET_KEY; if no secret key is set,
+    NoSecretKey exception is raised."""
+    if secret_key:
+        Meta.secret_key = secret_key
+    else :
+        Meta.secret_key = os.environ.get('AWS_SECRET_KEY', None)
+
+
+def getSecretKey():
+    """Get AWS secret key.
+    If no secret key is specified,  NoSecretKey is raised."""
+    if Meta.secret_key:
+        return Meta.secret_key
+    else :
+        raise NoSecretKey, ("Please get the secret key from  http://www.amazon.com/webservices")
 
 
 def getVersion():
