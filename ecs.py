@@ -145,8 +145,8 @@ from xml.dom import minidom
 
 
 class Meta:
-    license_key = None
-    secret_key = None
+    license_key = os.environ.get('AWS_LICENSE_KEY', None)
+    secret_key = os.environ.get('AWS_SECRET_KEY', None)
     locale = "us" 
     version = "2009-07-01"
     options = {}
