@@ -1,6 +1,6 @@
 PyAWS README
 
-Kun Xi <bookstack@gmail.com>
+Kun Xi <kunxi@kunxi.org>
 
 This project aims to eliminate the gap between the latest Amazon Web Service and the pyamazon module. Since Amazon still maintains the old calling convention, PyAWS just forked from the pyamazon-0.65, and most core functions are based on Mark Pilgrim and Michael Josephson's hardwork.
 
@@ -36,5 +36,4 @@ NOTE: we are not going to wrap the ItemLookup in a class, considering the overhe
 
 3. Usage -- TODO
 Before this section is complete, you could take a look at tests/ for more details about PyAWS in action.
-
 

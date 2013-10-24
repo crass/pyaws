@@ -1,16 +1,13 @@
-#!/usr/bin/env python
-#:coding=utf-8:
-
-import sys
-
-if sys.version < '2.2.3':
+from distutils.core import setup
+from sys import version
+if version < '2.2.3':
 	from distutils.dist import DistributionMetadata
 	DistributionMetadata.classifiers = None
 	DistributionMetadata.download_url = None
 
-METADATA = dict(
-	name='pyaws',
-	version='0.2.2',
+
+setup(name='pyaws',
+	version='0.3.0',
 	package_dir={'pyaws': ''},
 	packages=['pyaws'],
 	author='Kun Xi',
@@ -20,6 +17,7 @@ METADATA = dict(
 	url='http://pyaws.sourceforge.net',
 	license='Python Software Foundation License',
 	platforms='OS Independent',
+	download_url='http://prdownloads.sourceforge.net/pyaws/pyaws-0.1.0.tar.gz?download',
 	classifiers=[
 		'Development Status :: 2 - Pre-Alpha',
 		'Environment :: Web Environment',
@@ -27,23 +25,6 @@ METADATA = dict(
 		'License :: OSI Approved :: Python Software Foundation License',
 		'Operating System :: OS Independent',
 		'Programming Language :: Python',
-		'Topic :: Internet :: WWW/HTTP',
+		'Topic :: WWW/HTTP',
           ]
 )
-
-SETUPTOOLS_METADATA = dict(
-	test_suite='tests',	
-)
-
-def main():
-	# Use setuptools if available, otherwise fallback and use distutils
-	try:
-		import setuptools
-		METADATA.update(SETUPTOOLS_METADATA)
-		setuptools.setup(**METADATA)
-	except ImportError:
-		import distutils.core
-		distutils.core.setup(**METADATA)
-
-if __name__ == '__main__':
-	main()

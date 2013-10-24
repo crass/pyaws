@@ -9,14 +9,13 @@ to meet the latest AWS specification(http://www.amazon.com/webservices).
 This module defines the following classes:
 
 - `Bag`, a generic container for the python objects
-- `listIterator`, a derived class of list
-- `pagedIterator`, a page-based iterator using lazy evaluation
+- `ListIterator`, a forward iterator adapter
+- `PaginatedIterator`, a page-based iterator using lazy evaluation
 
 Exception classes:
 
 - `AWSException`
 - `NoLicenseKey`
-- `NoSecretAccessKey`
 - `BadLocale`
 - `BadOption`
 - `ExactParameterRequirement`
@@ -57,9 +56,9 @@ Functions:
 - `buildRequest`
 - `buildException`
 - `query`
-- `rawObject`
-- `rawIterator`
-- `pagedWrapper`
+- `SimpleObject`
+- `Collection`
+- `Pagination`
 - `unmarshal`
 - `ItemLookup`
 - `XMLItemLookup`
@@ -110,7 +109,7 @@ How To Use This Module
 2. Import it: ``import pyaws.ecs``
 
 3. Setup the license key: ``ecs.setLicenseKey('YOUR-KEY-FROM-AWS')``
-   or you could use the environment variable AMAZON_LICENSE_KEY
+   or you could use the environment variable AMAZON_Meta.license_key
 
    Optional: 
    a) setup other options, like AssociateTag, MerchantID, Validate
@@ -118,74 +117,33 @@ How To Use This Module
    c) setup the locale if your locale is not ``us``
 
 4. Send query to the AWS, and manupilate the returned python object.
-
 """
 
-__author__ = "Kun Xi < kunxi@kunxi.org >"
-__version__ = "0.2.0"
+__author__ = "Kun Xi <kunxi@kunxi.org>"
+__version__ = "0.3.0"
 __license__ = "Python Software Foundation"
 __docformat__ = 'restructuredtext'
 
 
-import os, urllib, string, hmac, hashlib, sys
-from datetime import datetime
+import os, urllib, string
 from xml.dom import minidom
 
-# python 2.4 compat for hashes
-try:
-    from hashlib import sha1 as sha
-    from hashlib import sha256 as sha256
+
+class Meta:
+    license_key = None
+    locale = "us" 
+    version = "2007-04-04"
+    options = {}
     
-    if sys.version[:3] == "2.4":
-        # we are using an hmac that expects a .new() method.
-        class Faker:
-            def __init__(self, which):
-                self.which = which
-                self.digest_size = self.which().digest_size
-            
-            def new(self, *args, **kwargs):
-                return self.which(*args, **kwargs)
-        
-        sha = Faker(sha)
-        sha256 = Faker(sha256)
-
-except ImportError:
-    import sha
-    sha256 = None
-
-
-# Package-wide variables:
-LICENSE_KEY = None
-SECRET_ACCESS_KEY = None
-LOCALE = "us"
-VERSION = "2009-06-01"
-OPTIONS = {}
-
-
-__supportedLocales = {
+    locales = {
         None : "ecs.amazonaws.com",  
         "us" : "ecs.amazonaws.com",  
         "uk" : "ecs.amazonaws.co.uk", 
-        "de" : "ecs.amazonaws.de", 
-        "jp" : "ecs.amazonaws.jp", 
-        "fr" : "ecs.amazonaws.fr", 
-        "ca" : "ecs.amazonaws.ca", 
+        "de" : "ecs.amazonaws.co.de", 
+        "jp" : "ecs.amazonaws.co.jp", 
+        "fr" : "ecs.amazonaws.co.fr", 
+        "ca" : "ecs.amazonaws.co.ca", 
     }
-
-__licenseKeys = (
-    (lambda key: key),
-    (lambda key: LICENSE_KEY), 
-    (lambda key: os.environ.get('AWS_LICENSE_KEY', None)),
-    (lambda key: os.environ.get('AWS_ACCESS_KEY_ID', None))
-   )
-
-__secretAccessKeys = (
-    (lambda key: key),
-    (lambda key: SECRET_ACCESS_KEY), 
-    (lambda key: os.environ.get('AWS_SECRET_ACCESS_KEY', None))
-   )
-
-
 
 def __buildPlugins():
     """
@@ -247,8 +205,7 @@ def __buildPlugins():
         'CustomerFull': ((), (), (), (), {}),
         'CustomerInfo': ((), (), ('Customers',), ('Customer',), {}),
         'CustomerLists': ((), (), ('Customers',), ('Customer',), {}),
-        'CustomerReviews': ((), (), ('Customers',),('Customer', 'Review'), 
-            {'CustomerReviews': ('ReviewPage', 'TotalReviews', 10)}),
+        'CustomerReviews': ((), (), ('Customers', 'CustomerReviews',),('Customer', 'Review'),{}),
         'EditorialReview': ((), (), ('EditorialReviews',), ('EditorialReview',), {}),
         'Help': ((), (), ('RequiredParameters', 'AvailableParameters',
             'DefaultResponseGroups', 'AvailableResponseGroups'),
@@ -257,13 +214,14 @@ def __buildPlugins():
         'ItemAttributes': ((), ('ItemAttributes',), (), (), {}),
         'ItemIds': ((), (), (), (), {}),
         'ItemLookup.Small': ((), ('ItemAttributes',), (), ('Item',), 
-            {'Items': ('OfferPage', 'TotalResults', 10) }),
+            {'Items': ('OfferPage', 'OfferPages', 10) }),
         'ItemSearch.Small': ((), ('ItemAttributes',), (), ('Item',), 
-            {'Items': ('ItemPage', 'TotalResults', 10) }),
+            {'Items': ('ItemPage', 'TotalPages', 10) }),
         'Large': ((), (), (), (), {}),
-        'ListFull': ((), (), (), (), {}),
+        'ListFull': ((), (), (), ('ListItem', ), {}),
         'ListInfo': ((), (), (), (), {}),
-        'ListItems': ((), (), (), (), {}),
+        'ListItems': ((), (), ('Lists',), ('ListItem', 'List'), {'List': ('ProductPage',
+            'TotalPages', 10)}),
         'ListmaniaLists': ((), (), ('ListmaniaLists', ), ('ListmaniaList',), {}),
         'ListMinimum': ((), (), (), (), {}),
         'Medium': ((), (), (), (), {}),
@@ -271,20 +229,20 @@ def __buildPlugins():
         'NewReleases': ((), (), ('NewReleases',), ('NewRelease',), {}),
         'OfferFull': ((), (), (), (), {}),
         'OfferListings': ((), (), (), (), {}),
-        'Offers': ((), (), (), ('Offer',), {'Offers': ('OfferPage', 'TotalOffers', 10)}),
+        'Offers': ((), (), (), ('Offer',), {'Offers': ('OfferPage', 'TotalOfferPages', 10)}),
         'OfferSummary': ((), (), (), (), {}),
         'Request': (('Request',), (), (), (), {}),
-        'Reviews': ((), (), (),('Review',), 
-            {'CustomerReviews': ('ReviewPage', 'TotalReviews', 10)}),
+        'Reviews': ((), (), ('CustomerReviews', ),('Review',), {}),
         'SalesRank': ((), (), (), (), {}),
         'SearchBins': ((), (), ('SearchBinSets',), ('SearchBinSet',), {}),
+        'SimilarityLookup.Small': ((), ('ItemAttributes',), ('Items',), ('Item',), {}),
         'Seller': ((), (), (), (), {}),
         'SellerListing': ((), (), (), (), {}),
         'Similarities': ((), (), ('SimilarProducts',), ('SimilarProduct',), {}),
         'Small': ((), (), (), (), {}),
         'Subjects': ((), (), ('Subjects',), ('Subject',), {}),
         'TopSellers': ((), (), ('TopSellers',), ('TopSeller',), {}),
-        'Tracks': ((), (), (), (), {}),
+        'Tracks': ((), ('Tracks',), (), (), {}),
         'TransactionDetails': ((), (), ('Transactions', 'TransactionItems', 'Shipments'),
             ('Transaction', 'TransactionItem', 'Shipment'), {}),
         'Variations': ((), (), (), (), {}),
@@ -313,7 +271,7 @@ def __buildPlugins():
         'SellerListingLookup': ('Request', 'SellerListing'),
         'SellerListingSearch': ('Request', 'SellerListing'),
         'SellerLookup': ('Request', 'Seller'),
-        'SimilarityLookup': ('Request', 'Small', 'Accessories', 'BrowseNodes', 'EditorialReview', 'Images', 'ItemAttributes', 'ItemIds', 'Large', 'ListmaniaLists', 'Medium', 'Offers', 'OfferSummary', 'Reviews', 'SalesRank', 'Similarities', 'Tracks', 'VariationMinimum', 'Variations', 'VariationSummary'),
+        'SimilarityLookup': ('Request', 'SimilarityLookup.Small', 'Accessories', 'BrowseNodes', 'EditorialReview', 'Images', 'ItemAttributes', 'ItemIds', 'Large', 'ListmaniaLists', 'Medium', 'Offers', 'OfferSummary', 'Reviews', 'SalesRank', 'Similarities', 'Tracks', 'VariationMinimum', 'Variations', 'VariationSummary'),
         'TransactionLookup':('Request', 'TransactionDetails') 
     }
     
@@ -346,124 +304,70 @@ def __buildPlugins():
 
 __plugins = __buildPlugins()
 
-# Wrapper class for ECS
+# Basic class for ECS
 class Bag : 
     """A generic container for the python objects"""
     def __repr__(self):
         return '<Bag instance: ' + self.__dict__.__repr__() + '>'
     
 
-
-def rawObject(XMLSearch, arguments, kwItem, plugins=None):
-    """Return simple object from `unmarshal`"""
-    dom = XMLSearch(** arguments)
-    return unmarshal(XMLSearch, arguments, dom.getElementsByTagName(kwItem).item(0), plugins) 
-
-def rawIterator(XMLSearch, arguments, kwItems, plugins=None):
-    """Return list of objects from `unmarshal`"""
-    dom = XMLSearch(** arguments)
-    return unmarshal(XMLSearch, arguments, dom.getElementsByTagName(kwItems).item(0), plugins, listIterator())
-
-
-class listIterator(list):
-    """List with extended attributes"""
+class ListIterator(list):
     pass
 
 
-def pagedWrapper(XMLSearch, arguments, keywords, plugins):
-    """Wrapper of pagedIterator
-    Parameters:
-
-    - `XMLSearch`: a function, the query to get the DOM
-    - `arguments`: a dictionary, `XMLSearch`'s arguments
-    - `keywords`: a tuple, (kwItems, (kwPage, kwTotalResults, pageSize) )
-    - `plugins`: a dictionary, collection of plugged objects
-    
-    Note: it is possible to have more than one pagedIterators
-    in plugins, but only one pagedIterator is returned in
-    pagedWrapper. 
-    """
-
-    return pagedIterator(XMLSearch, arguments, keywords,
-        XMLSearch(** arguments).getElementsByTagName(keywords[0]).item(0),
-        plugins)
-    
-class pagedIterator:
-    """
-    A page-based iterator using lazy evaluation.
-    In some service, such as ItemSearch, AWS returns the result based on
-    pages, the pagedIterator keeps track of the current page, and send
-    the request only if necessary.
-
-    Bugs: 
-
-    - list slicing is still missing.
-    """
-
+class PaginatedIterator(ListIterator):
     def __init__(self, XMLSearch, arguments, keywords, element, plugins):
         """
-        Initialize a `pagedIterator` object.
+        Initialize a `PaginatedIterator` object.
         Parameters:
 
         - `XMLSearch`: a function, the query to get the DOM
         - `arguments`: a dictionary, `XMLSearch`'s arguments
-        - `keywords`: a tuple, (kwItems, (kwPage, kwTotalResults, pageSize) )
+        - `keywords`: a tuple, (kwItems, (kwPage, kwTotalPages, pageSize) )
         - `element`: a DOM element, the root of the collection
         - `plugins`: a dictionary, collection of plugged objects
         """
-        kwItems, (kwPage, kwTotalResults, pageSize) = keywords
+        kwItems, (kwPage, kwTotalPages, pageSize) = keywords
 
-        self.__search = XMLSearch 
-        self.__arguments = arguments 
-        self.__plugins = plugins
-        self.__keywords ={'Items':kwItems, 'Page':kwPage}
-        self.__page = arguments[kwPage] or 1
-            
-        """Current page"""
-        self.__index = 0
-        """Current index"""
-        self.__pageSize = pageSize
-
-        self.__items = unmarshal(XMLSearch, arguments, element, plugins, listIterator())
-        """Cached items"""
-        try:
-            self.__len = int(element.getElementsByTagName(kwTotalResults).item(0).firstChild.data)
-        except AttributeError, e:
-            self.__len = len(self.__items)
-
-    def __len__(self):
-        return self.__len
+        self.search = XMLSearch 
+        self.arguments = arguments 
+        self.plugins = plugins
+        self.keywords ={'Items':kwItems, 'Page':kwPage}
+        self.total_page = int(element.getElementsByTagName(kwTotalPages).item(0).firstChild.data)
+        self.page = 1
+        self.cache = unmarshal(XMLSearch, arguments, element, plugins, ListIterator())
 
     def __iter__(self):
-        return self
+        while True:
+            for x in self.cache:
+                yield x
+            self.page += 1
+            if self.page > self.total_page:
+                raise StopIteration
+            self.arguments[self.keywords['Page']] = self.page
+            dom = self.search(** self.arguments)
+            self.cache = unmarshal(self.search, self.arguments, dom.getElementsByTagName(self.keywords['Items']).item(0), self.plugins, ListIterator())
 
-    def next(self):
-        if self.__index < self.__len:
-            self.__index = self.__index + 1
-            return self.__getitem__(self.__index-1)
-        else:
-            raise StopIteration
 
-    def __getitem__(self, key):
-        num = int(key)
-        if num >= self.__len:
-            raise IndexError
+def SimpleObject(XMLSearch, arguments, kwItem, plugins=None):
+    """Return simple object from `unmarshal`"""
+    dom = XMLSearch(** arguments)
+    return unmarshal(XMLSearch, arguments, dom.getElementsByTagName(kwItem).item(0), plugins) 
 
-        page = num / self.__pageSize + 1
-        index = num % self.__pageSize
-        if page != self.__page:
-            self.__arguments[self.__keywords['Page']] = page
-            dom = self.__search(** self.__arguments)
-            self.__items = unmarshal(self.__search, self.__arguments, dom.getElementsByTagName(self.__keywords['Items']).item(0), self.__plugins, listIterator())
-            self.__page = page
+def Collection(XMLSearch, arguments, kwItems, plugins=None):
+    """Return collection of objects from `unmarshal` using ListIterator interface."""
+    dom = XMLSearch(** arguments)
+    return unmarshal(XMLSearch, arguments, dom.getElementsByTagName(kwItems).item(0), plugins, ListIterator())
 
-        return self.__items[index]
+def Pagination(XMLSearch, arguments, keywords, plugins):
+    return PaginatedIterator(XMLSearch, arguments, keywords,
+        XMLSearch(** arguments).getElementsByTagName(keywords[0]).item(0),
+        plugins)
 
 
 # Exception classes
 class AWSException(Exception) : pass
 class NoLicenseKey(AWSException) : pass
-class NoSecretAccessKey(AWSException) : pass
 class BadLocale(AWSException) : pass
 class BadOption(AWSException): pass
 # Runtime exception
@@ -494,125 +398,18 @@ class RestrictedParameterValueCombination(AWSException): pass
 class XSLTTransformationError(AWSException): pass
 
 
-# Utilities functions
-def setLocale(locale):
-    """Set the locale
-    if unsupported locale is set, BadLocale is raised."""
-    global LOCALE
-    if not __supportedLocales.has_key(locale):
-        raise BadLocale, ("Unsupported locale. Locale must be one of: %s" %
-            ', '.join([x for x in __supportedLocales.keys() if x]))
-    LOCALE = locale
-
-
-def getLocale():
-    """Get the locale"""
-    return LOCALE
-
-
-def setLicenseKey(license_key=None):
-    """Set AWS license key.
-    If license_key is not specified, the license key is set using the
-    environment variable: AMAZON_LICENSE_KEY; if no license key is 
-    set, NoLicenseKey exception is raised."""
-    
-    global LICENSE_KEY
-    for get in __licenseKeys:
-        rc = get(license_key)
-        if rc: 
-            LICENSE_KEY = rc;
-            return;
-    raise NoLicenseKey, ("Please get the license key from  http://www.amazon.com/webservices")
-
-
-def getLicenseKey():
-    """Get license key.
-    If no license key is specified,  NoLicenseKey is raised."""
-
-    if not LICENSE_KEY:
-        setLicenseKey()
-    return LICENSE_KEY
-
-def setSecretAccessKey(secret_access_key=None):
-    """Sets your secret AWS key.
-    If secret_access_key is not specified, we look for the 
-    environment variable: AMAZON_SECRET_ACCESS_KEY.  
-    Raises NoSecretAccessKey if we can't get it to work."""
-    
-    global SECRET_ACCESS_KEY
-    for get in __secretAccessKeys:
-        rc = get(secret_access_key)
-        if rc: 
-            SECRET_ACCESS_KEY = rc;
-            return;
-    raise NoSecretAccessKey, ("Please get your secret key from  http://www.amazon.com/webservices")
-
-def getSecretAccessKey():
-    """Get the secret access key.
-    If no key is specified,  NoSecretAccessKey is raised."""
-
-    if not SECRET_ACCESS_KEY:
-        setSecretAccessKey()
-    return SECRET_ACCESS_KEY
-
-def getVersion():
-    """Get the version of ECS specification"""
-    return VERSION
-    
-
-def setOptions(options):
-    """
-    Set the general optional parameter, available options are:
-    - AssociateTag
-    - MerchantID
-    - Version
-    - Validate
-    """
-    
-    if set(options.keys()).issubset( set(['AssociateTag', 'MerchantID', 'Validate']) ):
-        global OPTIONS
-        OPTIONS.update(options)
-    else:
-        raise BadOption, ('Unsupported option')
-
-        
-def getOptions():
-    """Get options"""
-    return OPTIONS 
-
-def buildSignature(netloc,query_string):
-    secret_key = getSecretAccessKey()
-    string_to_sign = 'GET\n%s\n%s\n%s' % (netloc,'/onca/xml',query_string)
-    
-    return urllib.quote_plus(hmac.new(secret_key,string_to_sign,sha256).digest().encode('base64').strip())
-
-def buildQuery(argv):
-    # 1. Filter any key set to 'None'
-    # 2. Sort the dict by key
-    # 3. Quote everything and build the query string
-    query_string = "&".join("%s=%s" % (k, urllib.quote(str(argv[k]))) for (k) in sorted(argv.keys()) if argv[k])
-
-    netloc = __supportedLocales[getLocale()]
-    signature = buildSignature(netloc, query_string)
-    return 'http://' + netloc + '/onca/xml?' + query_string + '&Signature=' + signature
-
 def buildRequest(argv):
-    """Adds some standard keys (like Timestamp and Version) to the request,
-    then builds and returns the request-url."""
-
+    """Build the REST request URL from argv."""
+    url = "http://" + Meta.locales[getLocale()] + "/onca/xml?Service=AWSECommerceService&" + 'Version=%s&' % Meta.version
     if not argv['AWSAccessKeyId']:
         argv['AWSAccessKeyId'] = getLicenseKey()
     argv.update(getOptions())
-    argv.update({'Service':'AWSECommerceService',
-                 'Timestamp':datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-                 'Version':VERSION})
+    return url + '&'.join(['%s=%s' % (k,urllib.quote(str(v))) for (k,v) in argv.items() if v]) 
 
-    return buildQuery(argv)
 
 def buildException(els):
     """Build the exception from the returned DOM node
     Note: only the first exception is raised."""
-
     error = els[0]
     class_name = error.childNodes[0].firstChild.data[4:]
     msg = error.childNodes[1].firstChild.data 
@@ -637,12 +434,12 @@ def query(url):
 
 
 def unmarshal(XMLSearch, arguments, element, plugins=None, rc=None):
-    """Return the `Bag` / `listIterator` object with attributes 
+    """Return the `Bag` / `ListIterator` object with attributes 
     populated using DOM element.
     
     Parameters:
 
-    - `XMLSearch`: callback function, used when construct pagedIterator
+    - `XMLSearch`: callback function, used when construct PaginatedIterator
     - `arguments`: arguments of `XMLSearch`
     - `element`: DOM object, the DOM element interested in
     - `plugins`: a dictionary, collection of plugged objects to fine-tune
@@ -664,7 +461,7 @@ def unmarshal(XMLSearch, arguments, element, plugins=None, rc=None):
         this children of elment is appended to grandparent
         this object is ignored.
     - if tagname in plugins['isPaged'].keys():
-        this pagedIterator is constructed for the object
+        this PaginatedIterator is constructed for the object
 
     CODE DEBT:
     
@@ -685,18 +482,23 @@ def unmarshal(XMLSearch, arguments, element, plugins=None, rc=None):
                     setattr(rc, key, [attr])
                 setattr(rc, key, getattr(rc, key) + [unmarshal(XMLSearch, arguments, child, plugins)])
             elif isinstance(child, minidom.Element):
-                if child.tagName in plugins['isCollected']:
-                    rc.append(unmarshal(XMLSearch, arguments, child, plugins))
-                elif child.tagName in plugins['isCollective']:
-                    setattr(rc, key, unmarshal(XMLSearch, arguments, child, plugins, listIterator([])))
-                elif child.tagName in plugins['isPaged'].keys():
-                    setattr(rc, key, pagedIterator(XMLSearch, arguments, (child.tagName, plugins['isPaged'][child.tagName]), child, plugins))
-                elif child.tagName in plugins['isPivoted']:
+                if child.tagName in plugins['isPivoted']:
                     unmarshal(XMLSearch, arguments, child, plugins, rc)
+                    continue
                 elif child.tagName in plugins['isBypassed']:
                     continue
-                else:
-                    setattr(rc, key, unmarshal(XMLSearch, arguments, child, plugins))
+
+                if child.tagName in plugins['isCollective']:
+                    value = unmarshal(XMLSearch, arguments, child, plugins, ListIterator())
+                elif child.tagName in plugins['isPaged'].keys():
+                    value = PaginatedIterator(XMLSearch, arguments, (child.tagName, plugins['isPaged'][child.tagName]), child, plugins)
+                else :
+                    value = unmarshal(XMLSearch, arguments, child, plugins)
+
+                if child.tagName in plugins['isCollected']:
+                    rc.append(value)
+                else :
+                    setattr(rc, key, value)
     else:
         rc = "".join([e.data for e in element.childNodes if isinstance(e, minidom.Text)])
     return rc
@@ -707,8 +509,7 @@ def unmarshal(XMLSearch, arguments, element, plugins=None, rc=None):
 
 def ItemLookup(ItemId, IdType=None, SearchIndex=None, MerchantId=None, Condition=None, DeliveryMethod=None, ISPUPostalCode=None, OfferPage=None, ReviewPage=None, ReviewSort=None, VariationPage=None, ResponseGroup=None, AWSAccessKeyId=None): 
     '''ItemLookup in ECS'''
-    return pagedWrapper(XMLItemLookup, vars(), 
-        ('Items', __plugins['ItemLookup']['isPaged']['Items']), __plugins['ItemLookup'])
+    return SimpleObject(XMLItemLookup, vars(), 'Item', __plugins['ItemLookup'])
 
     
 def XMLItemLookup(ItemId, IdType=None, SearchIndex=None, MerchantId=None, Condition=None, DeliveryMethod=None, ISPUPostalCode=None, OfferPage=None, ReviewPage=None, ReviewSort=None, VariationPage=None, ResponseGroup=None, AWSAccessKeyId=None): 
@@ -721,7 +522,7 @@ def XMLItemLookup(ItemId, IdType=None, SearchIndex=None, MerchantId=None, Condit
 def ItemSearch(Keywords, SearchIndex="Blended", Availability=None, Title=None, Power=None, BrowseNode=None, Artist=None, Author=None, Actor=None, Director=None, AudienceRating=None, Manufacturer=None, MusicLabel=None, Composer=None, Publisher=None, Brand=None, Conductor=None, Orchestra=None, TextStream=None, ItemPage=None, OfferPage=None, ReviewPage=None, Sort=None, City=None, Cuisine=None, Neighborhood=None, MinimumPrice=None, MaximumPrice=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, AWSAccessKeyId=None):  
     '''ItemSearch in ECS'''
 
-    return pagedWrapper(XMLItemSearch, vars(), 
+    return Pagination(XMLItemSearch, vars(), 
         ('Items', __plugins['ItemSearch']['isPaged']['Items']), __plugins['ItemSearch'])
 
 
@@ -732,21 +533,13 @@ def XMLItemSearch(Keywords, SearchIndex="Blended", Availability=None, Title=None
     return query(buildRequest(vars()))
 
 
-def SimilarityLookup(ItemId, SimilarityType=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, AWSAccessKeyId=None):  
+def SimilarityLookup(ItemId, SimilarityType=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, OfferPage=None, AWSAccessKeyId=None):  
     '''SimilarityLookup in ECS'''
 
-    argv = vars()
-    plugins = {
-        'isBypassed': (), 
-        'isPivoted': ('ItemAttributes',),
-        'isCollective': ('Items',),
-        'isCollected': ('Item',),
-        'isPaged': {}
-    }
-    return rawIterator(XMLSimilarityLookup, argv, 'Items', plugins)
+    return Collection(XMLSimilarityLookup, vars(), 'Items', __plugins['SimilarityLookup'])
 
 
-def XMLSimilarityLookup(ItemId, SimilarityType=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, AWSAccessKeyId=None):  
+def XMLSimilarityLookup(ItemId, SimilarityType=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, OfferPage=None, AWSAccessKeyId=None):  
     '''DOM representation of SimilarityLookup in ECS'''
 
     Operation = "SimilarityLookup"
@@ -757,17 +550,9 @@ def XMLSimilarityLookup(ItemId, SimilarityType=None, MerchantId=None, Condition=
 
 def ListLookup(ListType, ListId, ProductPage=None, ProductGroup=None, Sort=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, AWSAccessKeyId=None):  
     '''ListLookup in ECS'''
-
-    argv = vars()
-    plugins = {
-        'isBypassed': (), 
-        'isPivoted': ('ItemAttributes',),
-        'isCollective': ('Lists',), 
-        'isCollected': ('List',),
-        'isPaged' : { 'Lists': ('ProductPage', 'TotalResults', 10) }
-    }
-    return pagedWrapper(XMLListLookup, argv, 
-        ('Lists', plugins['isPaged']['Lists']), plugins)
+    return Pagination(XMLListLookup, vars(), 
+        ('List', __plugins['ListLookup']['isPaged']['List']),
+        __plugins['ListLookup'])
 
 
 def XMLListLookup(ListType, ListId, ProductPage=None, ProductGroup=None, Sort=None, MerchantId=None, Condition=None, DeliveryMethod=None, ResponseGroup=None, AWSAccessKeyId=None):  
@@ -788,7 +573,7 @@ def ListSearch(ListType, Name=None, FirstName=None, LastName=None, Email=None, C
         'isCollected': ('List',),
         'isPaged' : { 'Lists': ('ListPage', 'TotalResults', 10) }
     }
-    return pagedWrapper(XMLListSearch, argv, 
+    return Pagination(XMLListSearch, argv, 
         ('Lists', plugins['isPaged']['Lists']), plugins)
 
 
@@ -912,7 +697,7 @@ def __cartOperation(XMLSearch, arguments):
         'isCollected': ('CartItem', 'SavedForLaterItem'),
         'isPaged': {}
     }
-    return rawObject(XMLSearch, arguments, 'Cart', plugins)
+    return SimpleObject(XMLSearch, arguments, 'Cart', plugins)
 
 
 # Seller Operation
@@ -927,7 +712,7 @@ def SellerLookup(Sellers, FeedbackPage=None, ResponseGroup=None, AWSAccessKeyId=
         'isCollected': ('Seller',),
         'isPaged': {}
     }
-    return rawIterator(XMLSellerLookup, argv, 'Sellers', plugins)
+    return Collection(XMLSellerLookup, argv, 'Sellers', plugins)
 
 
 def XMLSellerLookup(Sellers, FeedbackPage=None, ResponseGroup=None, AWSAccessKeyId=None):
@@ -943,9 +728,9 @@ def XMLSellerLookup(Sellers, FeedbackPage=None, ResponseGroup=None, AWSAccessKey
 def SellerListingLookup(SellerId, Id, IdType="Listing", ResponseGroup=None, AWSAccessKeyId=None):
     '''SellerListingLookup in AWS
 
-    Notice: although the repsonse includes TotalPage, TotalResults, 
-    there is no ListingPage in the request, so we have to use rawIterator
-    instead of pagedIterator. Hope Amazaon would fix this inconsistance'''
+    Notice: although the repsonse includes TotalPages, TotalResults, 
+    there is no ListingPage in the request, so we have to use Collection
+    instead of PaginatedIterator. Hope Amazaon would fix this inconsistance'''
     
     argv = vars()
     plugins = {
@@ -955,7 +740,7 @@ def SellerListingLookup(SellerId, Id, IdType="Listing", ResponseGroup=None, AWSA
         'isCollected': ('SellerListing',),
         'isPaged': {}
     }
-    return rawIterator(XMLSellerListingLookup, argv, "SellerListings", plugins)
+    return Collection(XMLSellerListingLookup, argv, "SellerListings", plugins)
 
 
 def XMLSellerListingLookup(SellerId, Id, IdType="Listing", ResponseGroup=None, AWSAccessKeyId=None):
@@ -976,7 +761,7 @@ def SellerListingSearch(SellerId, Title=None, Sort=None, ListingPage=None, Offer
         'isCollected': ('SellerListing',),
         'isPaged' : { 'SellerListings': ('ListingPage', 'TotalResults', 10) }
     }
-    return pagedWrapper(XMLSellerListingSearch, argv, 
+    return Pagination(XMLSellerListingSearch, argv, 
         ('SellerListings', plugins['isPaged']['SellerListings']), plugins)
 
 
@@ -990,7 +775,7 @@ def XMLSellerListingSearch(SellerId, Title=None, Sort=None, ListingPage=None, Of
 def CustomerContentSearch(Name=None, Email=None, CustomerPage=1, ResponseGroup=None, AWSAccessKeyId=None):
     '''CustomerContentSearch in AWS'''
 
-    return rawIterator(XMLCustomerContentSearch, vars(), 'Customers', __plugins['CustomerContentSearch'])
+    return Collection(XMLCustomerContentSearch, vars(), 'Customers', __plugins['CustomerContentSearch'])
 
 
 def XMLCustomerContentSearch(Name=None, Email=None, CustomerPage=1, ResponseGroup=None, AWSAccessKeyId=None):
@@ -1015,7 +800,7 @@ def CustomerContentLookup(CustomerId, ReviewPage=1, ResponseGroup=None, AWSAcces
         'isCollected': ('Customer',),
 
     }
-    return rawIterator(XMLCustomerContentLookup, argv, 'Customers', __plugins['CustomerContentLookup'])
+    return Collection(XMLCustomerContentLookup, argv, 'Customers', __plugins['CustomerContentLookup'])
 
 
 def XMLCustomerContentLookup(CustomerId, ReviewPage=1, ResponseGroup=None, AWSAccessKeyId=None):
@@ -1030,7 +815,7 @@ def BrowseNodeLookup(BrowseNodeId, ResponseGroup=None, AWSAccessKeyId=None):
     """
     BrowseNodeLookup in AWS 
     """
-    return rawIterator(XMLBrowseNodeLookup, vars(), 'BrowseNodes', __plugins['BrowseNodeLookup'])
+    return Collection(XMLBrowseNodeLookup, vars(), 'BrowseNodes', __plugins['BrowseNodeLookup'])
 
 
 def XMLBrowseNodeLookup(BrowseNodeId, ResponseGroup=None, AWSAccessKeyId=None):
@@ -1043,7 +828,7 @@ def XMLBrowseNodeLookup(BrowseNodeId, ResponseGroup=None, AWSAccessKeyId=None):
 # Help
 def Help(HelpType, About, ResponseGroup=None, AWSAccessKeyId=None):
     '''Help in AWS'''
-    return rawObject(XMLHelp, vars(), 'Information', __plugins['Help'])
+    return SimpleObject(XMLHelp, vars(), 'Information', __plugins['Help'])
 
 
 def XMLHelp(HelpType, About, ResponseGroup=None, AWSAccessKeyId=None):
@@ -1056,7 +841,7 @@ def XMLHelp(HelpType, About, ResponseGroup=None, AWSAccessKeyId=None):
 # Transaction
 def TransactionLookup(TransactionId, ResponseGroup=None, AWSAccessKeyId=None):
     '''TransactionLookup in AWS'''
-    return rawIterator(XMLTransactionLookup, vars(), 'Transactions', __plugins['TransactionLookup'])
+    return Collection(XMLTransactionLookup, vars(), 'Transactions', __plugins['TransactionLookup'])
     
 
 def XMLTransactionLookup(TransactionId, ResponseGroup=None, AWSAccessKeyId=None):
@@ -1066,9 +851,61 @@ def XMLTransactionLookup(TransactionId, ResponseGroup=None, AWSAccessKeyId=None)
     return query(buildRequest(vars()))
 
 
+# helper functions
+def setLocale(locale):
+    """Set the locale
+    if unsupported locale is set, BadLocale is raised."""
+    if Meta.locales.has_key(locale):
+        Meta.locale = locale
+    else :
+        raise BadLocale, ("Unsupported locale. Locale must be one of: %s" %
+            ', '.join([x for x in Meta.locales.keys() if x]))
 
-if __name__ == "__main__" :
-    setLicenseKey("1MGVS72Y8JF7EC7JDZG2")
-    ItemSearch('XML Python', SearchIndex='Books', MerchantId='All', ResponseGroup='OfferFull')
-    import pdb
-    pdb.set_trace()
+def getLocale():
+    """Get the locale"""
+    return Meta.locale 
+
+
+def setLicenseKey(license_key=None):
+    """Set AWS license key.
+    If license_key is not specified, the license key is set using the
+    environment variable: AMAZON_Meta.license_key; if no license key is 
+    set, NoLicenseKey exception is raised."""
+    if license_key:
+        Meta.license_key = license_key
+    else :
+        Meta.license_key = os.environ.get('AWS_LICENSE_KEY', None)
+
+
+def getLicenseKey():
+    """Get AWS license key.
+    If no license key is specified,  NoLicenseKey is raised."""
+    if Meta.license_key:
+        return Meta.license_key
+    else :
+        raise NoLicenseKey, ("Please get the license key from  http://www.amazon.com/webservices")
+
+
+def getVersion():
+    """Get the version of ECS specification"""
+    return Meta.version
+    
+
+def setOptions(options):
+    """
+    Set the general optional parameter, available options are:
+    - AssociateTag
+    - MerchantID
+    - Version
+    - Validate
+    """
+    
+    if set(options.keys()).issubset( set(['AssociateTag', 'MerchantID', 'Validate']) ):
+        Meta.options.update(options)
+    else:
+        raise BadOption, ('Unsupported option')
+
+        
+def getOptions():
+    """Get options"""
+    return Meta.options 
